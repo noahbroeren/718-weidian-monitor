@@ -1,0 +1,24 @@
+{
+  "products": [
+    {
+      "name": "Balenciaga Heavyweight Sweatshirt",
+      "hints": "1300g heavyweight sweatshirt or hoodie, 重磅卫衣, grey and washed versions, oversized boxy fit, BLCG, 巴黎世家, their bestselling item"
+    },
+    {
+      "name": "Canada Goose Down Jacket",
+      "hints": "羽绒服, down jacket, CG, baffled stitch, coyote fur collar 郊狼毛领, Aviator 飞行员 01 model, black and grey, 80 white duck down fill, arm badge"
+    },
+    {
+      "name": "Maison Margiela Loved To Death Sneakers",
+      "hints": "distressed canvas high-top sneakers, painted worn-down finish, red and black, MM6, 马吉拉, Maggie La"
+    },
+    {
+      "name": "Gucci Stripe Jeans",
+      "hints": "GC, striped baggy fit jeans, green and red web stripe down the leg, black and washed grey denim, 古驰"
+    },
+    {
+      "name": "Celine Washed Denim Jacket",
+      "hints": "CL, classic washed denim trucker jacket, grey wash, 赛琳, elegant cut"
+    }
+  ]
+}

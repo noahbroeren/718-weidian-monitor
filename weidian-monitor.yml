@@ -1,0 +1,51 @@
+name: Weidian Monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weidian-monitor
+  cancel-in-progress: false
+
+jobs:
+  check-shop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        env:
+          WEIDIAN_SHOP_ID: "1679474173"
+
+          # Naam van de werkplaats; wordt nooit als merknaam gebruikt
+          WORKSHOP_NAME: "718 Made"
+
+          # Het endpoint staat in main.py en klopt. Alleen invullen als
+          # Weidian het ooit wijzigt; {shop_id}, {offset} en {limit} worden
+          # dan automatisch ingevuld.
+          # WEIDIAN_API_URL: ""
+
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WEIDIAN_COOKIE: ${{ secrets.WEIDIAN_COOKIE }}
+        run: python -u main.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name "weidian-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "chore: update shop snapshot"
+          git push
