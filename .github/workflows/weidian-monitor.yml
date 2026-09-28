@@ -47,6 +47,15 @@ jobs:
           # Gevuld door de keuzelijst bij een handmatige run
           TEST_POST: ${{ inputs.test_post }}
 
+          # Foto's vierkant opvragen bij de CDN; op "false" bij problemen
+          SQUARE_IMAGES: "true"
+
+          # Items die geen echt product zijn, gescheiden door komma's
+          SKIP_PATTERNS: "万能链接,邮费,补拍,定金,尾款,差价,运费"
+
+          # Vaste CNY->USD koers als de live koers niet op te halen is
+          # USD_RATE: "0.14"
+
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WEIDIAN_COOKIE: ${{ secrets.WEIDIAN_COOKIE }}
