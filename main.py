@@ -20,7 +20,11 @@ import os
 import re
 import json
 import time
+import base64
+import io
 import requests
+from datetime import datetime, timezone
+from PIL import Image
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
@@ -87,6 +91,81 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False, sort_keys=True)
+
+
+
+# ---------------------------------------------------------------------------
+# Afbeeldingen, wisselkoers en ruisfilter
+# ---------------------------------------------------------------------------
+
+SQUARE_IMAGES = os.environ.get("SQUARE_IMAGES", "true").lower() != "false"
+SQUARE_SIZE = 800
+
+# Items die geen echt product zijn en dus geen melding verdienen
+SKIP_PATTERNS = [p.strip() for p in os.environ.get(
+    "SKIP_PATTERNS", "万能链接,邮费,补拍,定金,尾款,差价,运费"
+).split(",") if p.strip()]
+
+_square_cache = {}
+
+
+def square_image_url(url):
+    """
+    Weidian-afbeeldingen eindigen vaak op _<breedte>_<hoogte>.jpg. Door daar
+    een vierkant formaat van te maken krijg je nette 1:1 foto's in Discord.
+    De URL wordt gecontroleerd voordat hij gebruikt wordt, zodat er nooit een
+    kapotte afbeelding in het bericht komt.
+    """
+    if not url or not SQUARE_IMAGES:
+        return url
+    if url in _square_cache:
+        return _square_cache[url]
+
+    candidate = re.sub(
+        r"_\d+_\d+\.(jpg|jpeg|png|webp)$",
+        f"_{SQUARE_SIZE}_{SQUARE_SIZE}.\\1",
+        url,
+        flags=re.IGNORECASE,
+    )
+
+    if candidate == url:
+        _square_cache[url] = url
+        return url
+
+    try:
+        r = requests.head(candidate, timeout=10, allow_redirects=True)
+        ok = r.status_code == 200
+    except requests.RequestException:
+        ok = False
+
+    _square_cache[url] = candidate if ok else url
+    if not ok:
+        print("  (vierkante variant niet beschikbaar, originele foto gebruikt)")
+    return _square_cache[url]
+
+
+def usd_rate():
+    """Haalt de CNY->USD koers op. Valt terug op een vaste koers."""
+    fixed = os.environ.get("USD_RATE")
+    if fixed:
+        try:
+            return float(fixed)
+        except ValueError:
+            pass
+    try:
+        r = requests.get("https://open.er-api.com/v6/latest/CNY", timeout=15)
+        rate = r.json().get("rates", {}).get("USD")
+        if rate:
+            return float(rate)
+    except (requests.RequestException, ValueError, AttributeError):
+        pass
+    print("  (kon de wisselkoers niet ophalen; USD-prijs wordt weggelaten)")
+    return None
+
+
+def is_noise(product) -> bool:
+    name = product.get("name", "")
+    return any(p in name for p in SKIP_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -318,24 +397,104 @@ Reply with exactly one cleaned name per line, numbered the same way as the input
 {numbered}"""
 
 
-def translate_names(names, cache):
+def prepare_image(url):
+    """Haalt een productfoto op en maakt hem klein genoeg voor de API."""
+    try:
+        r = requests.get(url, timeout=20)
+        if r.status_code != 200:
+            return None
+        img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        img.thumbnail((640, 640))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=78)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
+def build_name_prompt(products, catalogue):
+    workshop = os.environ.get("WORKSHOP_NAME", "718 Made")
+
+    if catalogue:
+        lines = []
+        for p in catalogue:
+            if p.get("hints"):
+                lines.append(f"- {p['name']}  |  recognise by: {p['hints']}")
+            else:
+                lines.append(f"- {p['name']}")
+        known = "\n".join(lines)
+    else:
+        known = "(none yet)"
+
+    return f"""You are naming products for the Discord shop channel of {workshop}, a workshop that reproduces garments and footwear from well-known fashion brands.
+
+For each product below you get the raw Weidian listing name and, where available, the product photo. The raw names are messy: mixed Chinese and English, brand abbreviations, batch markers in brackets, and seller noise.
+
+Work out what each item actually is and write a clean English name.
+
+IDENTIFYING THE BRAND - do this carefully, it is the part that matters most:
+- Read the photo as well as the name. Look for logos, labels, hardware, tags, prints, silhouette and construction details. A monogram, a web stripe, a horseshoe clasp, a specific collar shape or sole unit often identifies the brand when the text does not.
+- Expand abbreviations and Chinese brand names. Examples: PRD or 普拉达 is Prada; GC or 古驰 is Gucci; KS or 克罗心 is Chrome Hearts; MM6, 马吉拉 or 马JL is Maison Margiela; CG or 加拿大鹅 is Canada Goose; BLCG, BL or 巴黎世家 is Balenciaga; CL or 赛琳 is Celine; Sup is Supreme; 牛 in a collab context is usually the second brand abbreviated.
+- Collaborations are written "Brand A x Brand B".
+- Use the catalogue below: these are products this workshop is known to make.
+- Weigh the evidence. Only commit to a brand when the photo or the name actually supports it.
+
+WRITING THE NAME:
+- Format: "Brand + Product Type", plus ONE distinguishing detail such as colour, weight or model when it adds something. Keep it under about 60 characters.
+- Good: "Balenciaga Heavyweight Sweatshirt - Grey", "Chrome Hearts KSCut Jeans - Black 16.5oz", "Maison Margiela x Supreme Sweatshirt".
+- Too long: "Gucci Washed Blue Denim Jeans - Double Lock Buckle Silver Hardware, 26SS Runway". Cut it to "Gucci Washed Denim Jeans - Blue".
+- Drop batch markers such as 第二批现货, 现货秒发, 爆卖3000+, 新客尝鲜, 包邮, and slash-separated spec dumps.
+- {workshop} is the workshop, NOT a brand. Never use it as the brand name.
+- If you cannot establish the brand from either the photo or the name, use the product type alone, for example "Heavyweight Sweatshirt". Never guess a brand you have no evidence for.
+- No emoji.
+
+Catalogue of products this workshop is known to make:
+{known}
+
+Reply with exactly one cleaned name per line, numbered to match the input, and nothing else."""
+
+
+def translate_names(products, cache):
     """
-    Zet rauwe Weidian-namen om in schone Engelse productnamen met merk.
-    Al eerder verwerkte namen komen uit de cache, zodat elke naam maar een
-    keer door de API gaat.
+    Zet rauwe Weidian-producten om in schone Engelse namen met merk, op basis
+    van de naam EN de productfoto. Verwerkte namen worden in de cache bewaard,
+    zodat elk product maar een keer door de API gaat.
     """
-    todo = [n for n in dict.fromkeys(names) if n and n not in cache]
+    seen = set()
+    todo = []
+    for p in products:
+        name = p.get("name")
+        if name and name not in cache and name not in seen:
+            seen.add(name)
+            todo.append(p)
+
     if not todo:
         return cache
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        for n in todo:
-            cache[n] = n
+        for p in todo:
+            cache[p["name"]] = p["name"]
         return cache
 
     model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-    prompt = build_name_prompt(todo, load_catalogue())
+
+    content = [{"type": "text",
+                "text": build_name_prompt(todo, load_catalogue())}]
+
+    with_photo = 0
+    for i, p in enumerate(todo, 1):
+        content.append({"type": "text", "text": f"\nProduct {i}:\n{p['name']}"})
+        b64 = prepare_image(p.get("image")) if p.get("image") else None
+        if b64:
+            with_photo += 1
+            content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg",
+                           "data": b64},
+            })
+
+    print(f"  {len(todo)} product(en) analyseren ({with_photo} met foto)...")
 
     try:
         resp = requests.post(
@@ -348,9 +507,9 @@ def translate_names(names, cache):
             json={
                 "model": model,
                 "max_tokens": 4000,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": content}],
             },
-            timeout=120,
+            timeout=180,
         )
         resp.raise_for_status()
         payload = resp.json()
@@ -368,18 +527,19 @@ def translate_names(names, cache):
             if 0 <= idx < len(todo):
                 cleaned = m.group(2).strip().strip('"')
                 if cleaned:
-                    cache[todo[idx]] = cleaned
+                    cache[todo[idx]["name"]] = cleaned
 
-        missed = [n for n in todo if n not in cache]
-        for n in missed:
-            cache[n] = n
-        print(f"  {len(todo) - len(missed)} van {len(todo)} naam/namen opgeschoond"
-              + (f", {len(missed)} onveranderd gelaten" if missed else ""))
+        missed = [p for p in todo if p["name"] not in cache]
+        for p in missed:
+            cache[p["name"]] = p["name"]
+        done = len(todo) - len(missed)
+        print(f"  {done} van {len(todo)} naam/namen opgeschoond"
+              + (f", {len(missed)} onveranderd" if missed else ""))
     except Exception as e:
         print(f"  ! naamverwerking mislukt ({type(e).__name__}: {e}); "
               "originele namen worden gebruikt")
-        for n in todo:
-            cache.setdefault(n, n)
+        for p in todo:
+            cache.setdefault(p["name"], p["name"])
 
     return cache
 
@@ -427,25 +587,33 @@ def diff_products(old, new):
 # Naar Discord posten
 # ---------------------------------------------------------------------------
 
-def stock_text(value):
-    """Weidian gebruikt extreem hoge getallen voor 'onbeperkt'."""
+def cny(value):
+    if value is None:
+        return "?"
+    return f"{int(value):,}" if float(value).is_integer() else f"{value:,.2f}"
+
+
+def money(value, rate=None):
+    """Prijs als CNY met de dollarkoers eronder."""
     if value is None:
         return "unknown"
-    if value >= 100000:
-        return "Unlimited"
-    return str(value)
+    text = f"**{cny(value)} CNY**"
+    if rate:
+        text += f"\n${value * rate:,.2f}"
+    return text
 
 
-def money(value):
-    if value is None:
-        return "unknown"
-    if float(value).is_integer():
-        return f"{int(value):,} CNY"
-    return f"{value:,.2f} CNY"
+def money_change(old, new, rate=None):
+    """Prijswijziging: oude prijs doorgestreept, nieuwe vet, elk op een regel."""
+    line = f"~~{cny(old)} CNY~~ -> **{cny(new)} CNY**"
+    if rate and old is not None and new is not None:
+        line += f"\n~~${old * rate:,.2f}~~ -> ${new * rate:,.2f}"
+    return line
 
 
-def build_embed(kind, product, extra, translations):
+def build_embed(kind, product, extra, translations, rate=None):
     name = translations.get(product["name"], product["name"])
+
     embed = {
         "title": name[:250],
         "url": product["url"],
@@ -453,25 +621,28 @@ def build_embed(kind, product, extra, translations):
         "author": {"name": LABELS[kind]},
         "fields": [],
         "footer": {"text": f"718 Made  -  item {product['id']}"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     if kind == "price":
         embed["fields"].append({
             "name": "Price",
-            "value": f"~~{money(extra['old_price'])}~~  ->  **{money(product['price'])}**",
-            "inline": True,
+            "value": money_change(extra["old_price"], product["price"], rate),
+            "inline": False,
         })
     else:
         embed["fields"].append({
             "name": "Price",
-            "value": money(product["price"]),
+            "value": money(product["price"], rate),
             "inline": True,
         })
 
-    if product.get("stock") is not None and kind != "removed":
+    # Voorraad alleen tonen als het getal iets betekent
+    stock = product.get("stock")
+    if stock is not None and kind != "removed" and stock < 100000:
         embed["fields"].append({
             "name": "Stock",
-            "value": stock_text(product["stock"]),
+            "value": str(stock),
             "inline": True,
         })
 
@@ -483,17 +654,13 @@ def build_embed(kind, product, extra, translations):
         })
 
     if product.get("image"):
-        embed["thumbnail"] = {"url": product["image"]}
-
-    # De originele Chinese naam eronder, handig om in de shop terug te vinden
-    if name != product["name"]:
-        embed["description"] = product["name"][:300]
+        embed["thumbnail"] = {"url": square_image_url(product["image"])}
 
     return embed
 
 
-def post_changes(webhook_url, changes, translations):
-    embeds = [build_embed(k, p, e, translations) for k, p, e in changes]
+def post_changes(webhook_url, changes, translations, rate=None):
+    embeds = [build_embed(k, p, e, translations, rate) for k, p, e in changes]
 
     for i in range(0, len(embeds), MAX_EMBEDS_PER_MESSAGE):
         batch = embeds[i:i + MAX_EMBEDS_PER_MESSAGE]
@@ -525,6 +692,12 @@ def main():
         )
         return
 
+    skipped = {k: v for k, v in new_products.items() if is_noise(v)}
+    if skipped:
+        new_products = {k: v for k, v in new_products.items() if k not in skipped}
+        print(f"{len(skipped)} item(s) overgeslagen als ruis "
+              "(万能链接, aanbetaling, verzendkosten).")
+
     print(f"{len(new_products)} product(en) in de shop.")
 
     # TEST_POST=n plaatst n willekeurige huidige producten als voorbeeld,
@@ -547,9 +720,8 @@ def main():
                 if kind == "price" else {}
             changes.append((kind, product, extra))
 
-        translations = translate_names([p["name"] for _, p, _ in changes],
-                                       translations)
-        post_changes(webhook_url, changes, translations)
+        translations = translate_names([p for _, p, _ in changes], translations)
+        post_changes(webhook_url, changes, translations, usd_rate())
 
         # Momentopname wel bijwerken als die er nog niet was, maar geen
         # echte wijzigingen melden.
@@ -584,8 +756,8 @@ def main():
         summary[kind] = summary.get(kind, 0) + 1
     print("Wijzigingen: " + ", ".join(f"{LABELS[k]}: {v}" for k, v in summary.items()))
 
-    translations = translate_names([p["name"] for _, p, _ in changes], translations)
-    post_changes(webhook_url, changes, translations)
+    translations = translate_names([p for _, p, _ in changes], translations)
+    post_changes(webhook_url, changes, translations, usd_rate())
 
     state.update({"products": new_products, "translations": translations})
     save_state(state)
