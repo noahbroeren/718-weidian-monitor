@@ -527,6 +527,39 @@ def main():
 
     print(f"{len(new_products)} product(en) in de shop.")
 
+    # TEST_POST=n plaatst n willekeurige huidige producten als voorbeeld,
+    # zodat je kunt zien hoe de berichten eruitzien zonder te wachten tot er
+    # echt iets verandert. De momentopname blijft hierbij ongemoeid.
+    try:
+        test_post = int(os.environ.get("TEST_POST", "0") or "0")
+    except ValueError:
+        test_post = 0
+
+    if test_post > 0:
+        sample = list(new_products.values())[:test_post]
+        print(f"TEST_POST={test_post}: {len(sample)} voorbeeldbericht(en) "
+              "worden geplaatst.")
+        kinds = ["new", "restock", "sold_out", "price", "removed"]
+        changes = []
+        for i, product in enumerate(sample):
+            kind = kinds[i % len(kinds)]
+            extra = {"old_price": (product.get("price") or 0) + 50} \
+                if kind == "price" else {}
+            changes.append((kind, product, extra))
+
+        translations = translate_names([p["name"] for _, p, _ in changes],
+                                       translations)
+        post_changes(webhook_url, changes, translations)
+
+        # Momentopname wel bijwerken als die er nog niet was, maar geen
+        # echte wijzigingen melden.
+        if not state.get("initialised"):
+            state.update({"products": new_products, "initialised": True})
+        state["translations"] = translations
+        save_state(state)
+        print("Testberichten geplaatst.")
+        return
+
     if not state.get("initialised"):
         state.update({
             "products": new_products,
