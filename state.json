@@ -468,6 +468,15 @@
       "sold": null,
       "stock": 1000,
       "url": "https://weidian.com/item.html?itemID=7865547382"
+    },
+    "7870271711": {
+      "id": "7870271711",
+      "image": "https://si.geilicdn.com/wdseller1969611897-0d59000001a121075eb10a20e672_1320_1271.jpg",
+      "name": "自主小马Logo刺绣长袖 半胸拉链卫衣  黑色",
+      "price": 198.0,
+      "sold": null,
+      "stock": 588,
+      "url": "https://weidian.com/item.html?itemID=7870271711"
     }
   },
   "translations": {
@@ -486,6 +495,7 @@
     "【补货中重磅独家现货镀银版本】自主 十字贴皮拉链宽松夹克外套": "【补货中重磅独家现货镀银版本】自主 十字贴皮拉链宽松夹克外套",
     "万能链接/邮费补拍链接【vx二维码/dy二维码，可添加关注，了解更多新品资讯】": "Universal link / shipping fee placeholder",
     "瑕疵 刺绣字母人类连帽拉链卫衣 合身微宽松版型": "瑕疵 刺绣字母人类连帽拉链卫衣 合身微宽松版型",
-    "短袖 、卫衣 清仓": "短袖 、卫衣 清仓"
+    "短袖 、卫衣 清仓": "短袖 、卫衣 清仓",
+    "自主小马Logo刺绣长袖 半胸拉链卫衣  黑色": "自主小马Logo刺绣长袖 半胸拉链卫衣  黑色"
   }
 }
