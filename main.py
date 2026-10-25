@@ -11,26 +11,20 @@ de vorige momentopname, en post alleen de verschillen naar Discord:
   - prijswijziging
   - product verwijderd
 
-Chinese productnamen worden via de Claude API naar het Engels vertaald.
-Vertalingen worden bewaard in state.json, zodat elke naam maar een keer
-vertaald hoeft te worden.
+Productnamen worden getoond zoals ze in de shop staan.
 """
 
 import os
 import re
 import json
 import time
-import base64
-import io
 import requests
 from datetime import datetime, timezone
-from PIL import Image
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
-PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
 
-SHOP_ID = os.environ.get("WEIDIAN_SHOP_ID", "1679474173")
+SHOP_ID = os.environ.get("WEIDIAN_SHOP_ID", "1611988515")
 
 # Kleuren van de Discord-embeds per soort wijziging
 COLORS = {
@@ -76,16 +70,24 @@ if _cookie:
 # ---------------------------------------------------------------------------
 
 def load_state():
+    """
+    Leest de momentopname. Hoort die bij een andere shop, dan wordt opnieuw
+    begonnen: anders zou de hele oude catalogus als "verwijderd" en de nieuwe
+    als "nieuw" in het kanaal belanden.
+    """
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                data.setdefault("products", {})
-                data.setdefault("translations", {})
-                return data
         except (json.JSONDecodeError, OSError):
-            pass
-    return {"products": {}, "translations": {}, "initialised": False}
+            data = None
+        if isinstance(data, dict) and data.get("shop_id") == SHOP_ID:
+            data.setdefault("products", {})
+            return data
+        if data:
+            print(f"Momentopname hoort niet bij shop {SHOP_ID}; "
+                  "er wordt opnieuw begonnen.")
+    return {"shop_id": SHOP_ID, "products": {}, "initialised": False}
 
 
 def save_state(state):
@@ -339,212 +341,6 @@ def fetch_products():
 
 
 # ---------------------------------------------------------------------------
-# Vertalen
-# ---------------------------------------------------------------------------
-
-def load_catalogue():
-    """Leest products.json: bekende producten met herkenningsaanwijzingen."""
-    if not os.path.exists(PRODUCTS_FILE):
-        return []
-    try:
-        with open(PRODUCTS_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-    if isinstance(raw, dict):
-        raw = raw.get("products", [])
-    return [p for p in raw if isinstance(p, dict) and p.get("name")]
-
-
-def build_name_prompt(names, catalogue):
-    workshop = os.environ.get("WORKSHOP_NAME", "718 Made")
-
-    if catalogue:
-        lines = []
-        for p in catalogue:
-            if p.get("hints"):
-                lines.append(f"- {p['name']}  |  recognise by: {p['hints']}")
-            else:
-                lines.append(f"- {p['name']}")
-        known = "\n".join(lines)
-    else:
-        known = "(none yet)"
-
-    numbered = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names))
-
-    return f"""Below are raw product names from the Chinese Weidian storefront of {workshop}, a workshop that reproduces garments and footwear from well-known fashion brands.
-
-These raw names are messy: they mix Chinese and English, use brand abbreviations, and contain seller noise. Turn each one into a clean, readable English product name for a Discord shop-update channel.
-
-For each name:
-1. WORK OUT THE BRAND. The full brand name is often not written out. Expand abbreviations and Chinese brand names, for example PRD or 普拉达 is Prada, GC is Gucci, KS or 克罗心 is Chrome Hearts, MM6 and 马吉拉 are Maison Margiela, CG is Canada Goose, BLCG or 巴黎世家 is Balenciaga. Use the catalogue below, the product type, and any model codes to decide.
-2. WRITE THE CLEAN NAME as "Brand + Product Type", plus a distinguishing detail such as colour, weight or model when it is in the original. For example "Prada Canvas Carpenter Pants - Navy" or "Chrome Hearts KSCut Jeans - Black 16.5oz".
-3. STRIP THE NOISE: remove 包邮 (free shipping), store names, promotional filler, emoji, stray punctuation and slash-separated spec dumps that add nothing.
-4. KEEP model codes, sizes, weights and colours that identify the item.
-
-Rules:
-- {workshop} is the workshop, NOT a brand. Never use it as the brand name.
-- If you cannot work out the brand, use the product type alone, for example "Heavyweight Sweatshirt". Never guess a brand you have no evidence for.
-- If the entry is not a real product (a universal or placeholder link such as 万能链接, a deposit link, a test item), just write what it is, for example "Universal link".
-- No emoji in the output.
-- Keep each name short. A product name, not a sentence.
-
-Catalogue of products this workshop is known to make:
-{known}
-
-Reply with exactly one cleaned name per line, numbered the same way as the input, and nothing else.
-
-{numbered}"""
-
-
-def prepare_image(url):
-    """Haalt een productfoto op en maakt hem klein genoeg voor de API."""
-    try:
-        r = requests.get(url, timeout=20)
-        if r.status_code != 200:
-            return None
-        img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        img.thumbnail((640, 640))
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=78)
-        return base64.b64encode(buf.getvalue()).decode("ascii")
-    except Exception:
-        return None
-
-
-def build_name_prompt(products, catalogue):
-    workshop = os.environ.get("WORKSHOP_NAME", "718 Made")
-
-    if catalogue:
-        lines = []
-        for p in catalogue:
-            if p.get("hints"):
-                lines.append(f"- {p['name']}  |  recognise by: {p['hints']}")
-            else:
-                lines.append(f"- {p['name']}")
-        known = "\n".join(lines)
-    else:
-        known = "(none yet)"
-
-    return f"""You are naming products for the Discord shop channel of {workshop}, a workshop that reproduces garments and footwear from well-known fashion brands.
-
-For each product below you get the raw Weidian listing name and, where available, the product photo. The raw names are messy: mixed Chinese and English, brand abbreviations, batch markers in brackets, and seller noise.
-
-Work out what each item actually is and write a clean English name.
-
-IDENTIFYING THE BRAND - do this carefully, it is the part that matters most:
-- Read the photo as well as the name. Look for logos, labels, hardware, tags, prints, silhouette and construction details. A monogram, a web stripe, a horseshoe clasp, a specific collar shape or sole unit often identifies the brand when the text does not.
-- Expand abbreviations and Chinese brand names. Examples: PRD or 普拉达 is Prada; GC or 古驰 is Gucci; KS or 克罗心 is Chrome Hearts; MM6, 马吉拉 or 马JL is Maison Margiela; CG or 加拿大鹅 is Canada Goose; BLCG, BL or 巴黎世家 is Balenciaga; CL or 赛琳 is Celine; Sup is Supreme; 牛 in a collab context is usually the second brand abbreviated.
-- Collaborations are written "Brand A x Brand B".
-- Use the catalogue below: these are products this workshop is known to make.
-- Weigh the evidence. Only commit to a brand when the photo or the name actually supports it.
-
-WRITING THE NAME:
-- Format: "Brand + Product Type", plus ONE distinguishing detail such as colour, weight or model when it adds something. Keep it under about 60 characters.
-- Good: "Balenciaga Heavyweight Sweatshirt - Grey", "Chrome Hearts KSCut Jeans - Black 16.5oz", "Maison Margiela x Supreme Sweatshirt".
-- Too long: "Gucci Washed Blue Denim Jeans - Double Lock Buckle Silver Hardware, 26SS Runway". Cut it to "Gucci Washed Denim Jeans - Blue".
-- Drop batch markers such as 第二批现货, 现货秒发, 爆卖3000+, 新客尝鲜, 包邮, and slash-separated spec dumps.
-- {workshop} is the workshop, NOT a brand. Never use it as the brand name.
-- If you cannot establish the brand from either the photo or the name, use the product type alone, for example "Heavyweight Sweatshirt". Never guess a brand you have no evidence for.
-- No emoji.
-
-Catalogue of products this workshop is known to make:
-{known}
-
-Reply with exactly one cleaned name per line, numbered to match the input, and nothing else."""
-
-
-def translate_names(products, cache):
-    """
-    Zet rauwe Weidian-producten om in schone Engelse namen met merk, op basis
-    van de naam EN de productfoto. Verwerkte namen worden in de cache bewaard,
-    zodat elk product maar een keer door de API gaat.
-    """
-    seen = set()
-    todo = []
-    for p in products:
-        name = p.get("name")
-        if name and name not in cache and name not in seen:
-            seen.add(name)
-            todo.append(p)
-
-    if not todo:
-        return cache
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        for p in todo:
-            cache[p["name"]] = p["name"]
-        return cache
-
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-
-    content = [{"type": "text",
-                "text": build_name_prompt(todo, load_catalogue())}]
-
-    with_photo = 0
-    for i, p in enumerate(todo, 1):
-        content.append({"type": "text", "text": f"\nProduct {i}:\n{p['name']}"})
-        b64 = prepare_image(p.get("image")) if p.get("image") else None
-        if b64:
-            with_photo += 1
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg",
-                           "data": b64},
-            })
-
-    print(f"  {len(todo)} product(en) analyseren ({with_photo} met foto)...")
-
-    try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": 4000,
-                "messages": [{"role": "user", "content": content}],
-            },
-            timeout=180,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        if payload.get("stop_reason") == "max_tokens":
-            print("  ! antwoord liep tegen de tokenlimiet aan")
-
-        blocks = payload.get("content", [])
-        raw = "".join(b["text"] for b in blocks if b.get("type") == "text")
-
-        for line in raw.splitlines():
-            m = re.match(r"\s*(\d+)[.)]\s*(.+)", line)
-            if not m:
-                continue
-            idx = int(m.group(1)) - 1
-            if 0 <= idx < len(todo):
-                cleaned = m.group(2).strip().strip('"')
-                if cleaned:
-                    cache[todo[idx]["name"]] = cleaned
-
-        missed = [p for p in todo if p["name"] not in cache]
-        for p in missed:
-            cache[p["name"]] = p["name"]
-        done = len(todo) - len(missed)
-        print(f"  {done} van {len(todo)} naam/namen opgeschoond"
-              + (f", {len(missed)} onveranderd" if missed else ""))
-    except Exception as e:
-        print(f"  ! naamverwerking mislukt ({type(e).__name__}: {e}); "
-              "originele namen worden gebruikt")
-        for p in todo:
-            cache.setdefault(p["name"], p["name"])
-
-    return cache
-
-
-# ---------------------------------------------------------------------------
 # Verschillen bepalen
 # ---------------------------------------------------------------------------
 
@@ -611,11 +407,9 @@ def money_change(old, new, rate=None):
     return line
 
 
-def build_embed(kind, product, extra, translations, rate=None):
-    name = translations.get(product["name"], product["name"])
-
+def build_embed(kind, product, extra, rate=None):
     embed = {
-        "title": name[:250],
+        "title": product["name"][:250],
         "url": product["url"],
         "color": COLORS[kind],
         "author": {"name": LABELS[kind]},
@@ -659,8 +453,8 @@ def build_embed(kind, product, extra, translations, rate=None):
     return embed
 
 
-def post_changes(webhook_url, changes, translations, rate=None):
-    embeds = [build_embed(k, p, e, translations, rate) for k, p, e in changes]
+def post_changes(webhook_url, changes, rate=None):
+    embeds = [build_embed(k, p, e, rate) for k, p, e in changes]
 
     for i in range(0, len(embeds), MAX_EMBEDS_PER_MESSAGE):
         batch = embeds[i:i + MAX_EMBEDS_PER_MESSAGE]
@@ -679,7 +473,6 @@ def main():
 
     state = load_state()
     old_products = state.get("products", {})
-    translations = state.get("translations", {})
 
     print(f"Shop {SHOP_ID} ophalen...")
     new_products = fetch_products()
@@ -720,24 +513,18 @@ def main():
                 if kind == "price" else {}
             changes.append((kind, product, extra))
 
-        translations = translate_names([p for _, p, _ in changes], translations)
-        post_changes(webhook_url, changes, translations, usd_rate())
+        post_changes(webhook_url, changes, usd_rate())
 
         # Momentopname wel bijwerken als die er nog niet was, maar geen
         # echte wijzigingen melden.
         if not state.get("initialised"):
             state.update({"products": new_products, "initialised": True})
-        state["translations"] = translations
-        save_state(state)
+            save_state(state)
         print("Testberichten geplaatst.")
         return
 
     if not state.get("initialised"):
-        state.update({
-            "products": new_products,
-            "translations": translations,
-            "initialised": True,
-        })
+        state.update({"products": new_products, "initialised": True})
         save_state(state)
         print("Eerste run: momentopname vastgelegd, niets geplaatst. "
               "Vanaf nu worden alleen wijzigingen gemeld.")
@@ -756,10 +543,9 @@ def main():
         summary[kind] = summary.get(kind, 0) + 1
     print("Wijzigingen: " + ", ".join(f"{LABELS[k]}: {v}" for k, v in summary.items()))
 
-    translations = translate_names([p for _, p, _ in changes], translations)
-    post_changes(webhook_url, changes, translations, usd_rate())
+    post_changes(webhook_url, changes, usd_rate())
 
-    state.update({"products": new_products, "translations": translations})
+    state["products"] = new_products
     save_state(state)
     print(f"Klaar. {len(changes)} wijziging(en) geplaatst.")
 
