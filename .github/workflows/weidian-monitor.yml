@@ -34,10 +34,9 @@ jobs:
 
       - name: Run monitor
         env:
-          WEIDIAN_SHOP_ID: "1679474173"
-
-          # Naam van de werkplaats; wordt nooit als merknaam gebruikt
-          WORKSHOP_NAME: "718 Made"
+          # Shop-id uit de shoplink (shop<id>.v.weidian.com). Wijzig je dit,
+          # dan legt de volgende run eerst een nieuwe momentopname vast.
+          WEIDIAN_SHOP_ID: "1611988515"
 
           # Het endpoint staat in main.py en klopt. Alleen invullen als
           # Weidian het ooit wijzigt; {shop_id}, {offset} en {limit} worden
@@ -57,7 +56,6 @@ jobs:
           # USD_RATE: "0.14"
 
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WEIDIAN_COOKIE: ${{ secrets.WEIDIAN_COOKIE }}
         run: python -u main.py
 

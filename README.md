@@ -15,30 +15,19 @@ Gemeld worden:
 
 ## Productnamen
 
-Rauwe Weidian-namen zijn rommelig: `718制造 重磅卫衣 灰色 包邮` of
-`PRD 25SS Canvas 双膝伐木裤/正品riri拉链/山羊皮`. Het script laat Claude die
-niet alleen vertalen maar ook opschonen en het merk herkennen:
+Productnamen worden getoond zoals ze in de Weidian-shop staan, zonder
+vertaling of bewerking.
 
-| Rauw | Wordt |
-|---|---|
-| `718制造 重磅卫衣 灰色 包邮` | Balenciaga Heavyweight Sweatshirt - Grey |
-| `PRD 25SS Canvas 双膝伐木裤/...` | Prada Canvas Carpenter Pants - Navy |
-| `GC La Famiglia Introverso 锁扣...` | Gucci La Famiglia Jeans - Washed Grey |
+## Andere shop
 
-Merkafkortingen (PRD, GC, KS, MM6, CG, BLCG) en Chinese merknamen worden
-uitgeschreven. Verkopersruis zoals 包邮 (gratis verzending) en spec-dumps
-worden weggelaten.
+Het shop-id staat in de shoplink: `https://shop1611988515.v.weidian.com/` heeft
+id `1611988515`. Verandert de shop, zet dan het nieuwe id bij `WEIDIAN_SHOP_ID`
+in de workflow. De Referer-header gaat automatisch mee.
 
-`products.json` bevat de producten die 718 Made maakt, met een `hints`-veld
-per product. Hoe voller die hints, hoe beter de herkenning. Zet er gerust
-Chinese termen, kleurnamen, modelnamen en gewichten in.
-
-Is het merk niet af te leiden, dan gebruikt het script alleen het producttype.
-Het verzint nooit een merk en gebruikt 718 Made nooit als merknaam.
-
-De originele Chinese naam blijft in de embed onder de titel staan, zodat je het
-product in de shop kunt terugvinden. Verwerkte namen worden bewaard in
-`state.json`, dus elke naam gaat maar een keer door de API.
+`state.json` onthoudt bij welke shop de momentopname hoort. Klopt die niet meer,
+dan legt de volgende run eerst een nieuwe momentopname vast en post niets, net
+als bij de eerste run. Zo komt de oude catalogus niet als "verwijderd" en de
+nieuwe niet als "nieuw" in het kanaal.
 
 ## Hoe het werkt
 
@@ -60,7 +49,6 @@ hele catalogus in een keer als "nieuw product" in het kanaal belanden.
 | Naam | Waarde |
 |---|---|
 | `DISCORD_WEBHOOK_URL` | de webhook van het kanaal |
-| `ANTHROPIC_API_KEY` | dezelfde key als de Weibo-bots |
 | `WEIDIAN_COOKIE` | alleen nodig als Weidian zonder login niets teruggeeft |
 
 3. Draai de workflow handmatig. De eerste run legt de momentopname vast.
@@ -70,7 +58,7 @@ hele catalogus in een keer als "nieuw product" in het kanaal belanden.
 Het script gebruikt het verzoek dat de shoppagina zelf doet:
 
 ```
-https://thor.weidian.com/decorate/shopDetail.tab.getItemList/1.0?param={"shopId":"1679474173","tabId":0,"sortOrder":"desc","offset":0,"limit":20,"from":"h5","showItemTag":true}
+https://thor.weidian.com/decorate/shopDetail.tab.getItemList/1.0?param={"shopId":"1611988515","tabId":0,"sortOrder":"desc","offset":0,"limit":20,"from":"h5","showItemTag":true}
 ```
 
 Het loopt met `offset` in stappen van 20 door de hele catalogus.
@@ -87,7 +75,7 @@ Gebruikte velden per product: `itemId`, `itemName`, `price`, `stock`, `sold`,
 
 Zie je in het log "Geen producten gevonden", haal dan het nieuwe verzoek op:
 
-1. Open de shop in Chrome: `https://shop1679474173.v.weidian.com/`
+1. Open de shop in Chrome: `https://shop1611988515.v.weidian.com/`
 2. F12 -> tabblad **Network** -> klik op het filter **Fetch/XHR**
 3. Ververs de pagina en scroll naar beneden tot alle producten geladen zijn
 4. Klik de verzoeken in de lijst langs en kijk bij **Preview** welk verzoek de
